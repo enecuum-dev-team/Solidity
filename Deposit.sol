@@ -1,4 +1,5 @@
-pragma solidity ^0.6.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
 interface IERC20 {
 
@@ -16,11 +17,28 @@ interface IERC20 {
 }
 
 
+interface CERC20 {
+    function mint(uint256) external returns (uint256);
+
+    function exchangeRateCurrent() external returns (uint256);
+
+    function supplyRatePerBlock() external returns (uint256);
+
+    function redeem(uint) external returns (uint);
+
+    function redeemUnderlying(uint) external returns (uint);
+}
+
 contract Deposit {
 
-    mapping(address => uint256) balances;
+    event MyLog(string, uint256);
 
-    mapping(address => mapping (address => uint256)) allowed;
+    mapping(address => mapping (address => uint256)) public balances;
+
+    mapping(address => mapping (address => uint256)) public c_balances;
+
+    mapping(address => mapping (address => uint256))  allowed;
+
 
     using SafeMath for uint256;
 
@@ -34,7 +52,7 @@ contract Deposit {
             IERC20(token).allowance(msg.sender, address(this)) >= amount,
             "Token allowance too low"
         );
-        balances[msg.sender] = balances[msg.sender].add(amount);
+        balances[msg.sender][token] = balances[msg.sender][token].add(amount);
         bool sent = IERC20(token).transferFrom(msg.sender, address(this), amount);
         require(sent, "Token transfer failed");
     }
@@ -44,52 +62,41 @@ contract Deposit {
              IERC20(token).balanceOf(msg.sender) >= amount, 
             "The balance on the deposit is too low"
         );
-        balances[msg.sender] = balances[msg.sender].sub(amount);
+        balances[msg.sender][token]  = balances[msg.sender][token].sub(amount);
         bool sent = IERC20(token).transfer(msg.sender, amount);
         require(sent, "Token transfer failed");
     }
 
+    function supplyErc20ToCompound(
+        address token,
+        address c_token,
+        uint256 amount
+    ) public returns (uint) {
+        // Create a reference to the underlying asset contract, like DAI.
+        IERC20 underlying = IERC20(token);
 
+        // Create a reference to the corresponding cToken contract, like cDAI
+        CERC20 cToken = CERC20(c_token);
 
+        // Amount of current exchange rate from cToken to underlying
+        uint256 exchangeRateMantissa = cToken.exchangeRateCurrent();
+        emit MyLog("Exchange Rate (scaled up): ", exchangeRateMantissa);
 
-/*
-    function totalSupply() public override view returns (uint256) {
-    return totalSupply_;
+        // Amount added to you supply balance this block
+        uint256 supplyRateMantissa = cToken.supplyRatePerBlock();
+        emit MyLog("Supply Rate: (scaled up)", supplyRateMantissa);
+
+        // Approve transfer on the ERC20 contract
+        underlying.approve(c_token, amount);
+
+        // Mint cTokens
+        uint mintResult = cToken.mint(amount);
+        
+        balances[msg.sender][token] = balances[msg.sender][token].sub(amount);
+        c_balances[msg.sender][token] = c_balances[msg.sender][token].add(amount);
+
+        return mintResult;
     }
-
-    function balanceOf(address tokenOwner) public override view returns (uint256) {
-        return balances[tokenOwner];
-    }
-
-    function transfer(address receiver, uint256 numTokens) public override returns (bool) {
-        require(numTokens <= balances[msg.sender]);
-        balances[msg.sender] = balances[msg.sender].sub(numTokens);
-        balances[receiver] = balances[receiver].add(numTokens);
-        emit Transfer(msg.sender, receiver, numTokens);
-        return true;
-    }
-
-    function approve(address delegate, uint256 numTokens) public override returns (bool) {
-        allowed[msg.sender][delegate] = numTokens;
-        emit Approval(msg.sender, delegate, numTokens);
-        return true;
-    }
-
-    function allowance(address owner, address delegate) public override view returns (uint) {
-        return allowed[owner][delegate];
-    }
-
-    function transferFrom(address owner, address buyer, uint256 numTokens) public override returns (bool) {
-        require(numTokens <= balances[owner]);
-        require(numTokens <= allowed[owner][msg.sender]);
-
-        balances[owner] = balances[owner].sub(numTokens);
-        allowed[owner][msg.sender] = allowed[owner][msg.sender].sub(numTokens);
-        balances[buyer] = balances[buyer].add(numTokens);
-        emit Transfer(owner, buyer, numTokens);
-        return true;
-    }
-*/
 }
 
 library SafeMath {
