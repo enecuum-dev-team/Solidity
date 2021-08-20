@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import  "./ECDSA.sol";
+
 interface IERC20 {
 
     function totalSupply() external view returns (uint256);
@@ -29,7 +31,14 @@ interface CERC20 {
     function redeemUnderlying(uint) external returns (uint);
 }
 
+interface COMPTROLLER {
+    function claimComp(address holder, CERC20[] memory cTokens) external view returns (uint256);
+    function claimComp(address holder) external view returns (uint256);
+}
+
 contract Deposit {
+    
+    ECDSA public interfaceECDSA;
 
     event MyLog(string, uint256);
 
@@ -38,12 +47,38 @@ contract Deposit {
     mapping(address => mapping (address => uint256)) public c_balances;
 
     mapping(address => mapping (address => uint256))  allowed;
+    
+    mapping(bytes32 => bool) public invoices;
 
 
+    string public _str;
+    
     using SafeMath for uint256;
+    
+    constructor() {
+        interfaceECDSA = new ECDSA();
+    }
 
 
-    function lock(address token, uint256 amount) public {
+    function lock(address token, uint256 amount, string memory enq_address) public {
+        require(
+            amount <= IERC20(token).balanceOf(msg.sender), 
+            "Token balance is too low"
+        );
+        require(
+            IERC20(token).allowance(msg.sender, address(this)) >= amount,
+            "Token allowance too low"
+        );
+        require(
+            bytes(enq_address).length == 66,
+            "Invalid ENQ address format"
+        );
+        balances[msg.sender][token] = balances[msg.sender][token].add(amount);
+        bool sent = IERC20(token).transferFrom(msg.sender, address(this), amount);
+        require(sent, "Token transfer failed");
+    }
+    
+    function lock_with_deposit(address token, address c_token, uint256 amount) public {
         require(
             amount <= IERC20(token).balanceOf(msg.sender), 
             "Token balance is too low"
@@ -55,23 +90,26 @@ contract Deposit {
         balances[msg.sender][token] = balances[msg.sender][token].add(amount);
         bool sent = IERC20(token).transferFrom(msg.sender, address(this), amount);
         require(sent, "Token transfer failed");
+        supplyErc20ToCompound(token, c_token, amount);
     }
     
-    function unlock(address token, uint256 amount) public {
-        require(
-             IERC20(token).balanceOf(msg.sender) >= amount, 
-            "The balance on the deposit is too low"
-        );
-        balances[msg.sender][token]  = balances[msg.sender][token].sub(amount);
-        bool sent = IERC20(token).transfer(msg.sender, amount);
+    function unlock(address token, address recipient, uint256 amount, bytes memory sign) public {
+        bytes32 invoice_hash = interfaceECDSA.ethInvoceHash(token, recipient, amount);
+        bool exits = invoices[invoice_hash];
+        require(!exits, "Invoice has already been used.");
+        bool valid_sign = interfaceECDSA.verify(token, recipient, amount, sign);
+        require(valid_sign, "Invalid signature. Unlock failed");
+        
+        bool sent = IERC20(token).transfer(recipient, amount);
         require(sent, "Token transfer failed");
+        invoices[invoice_hash] = true;
     }
 
     function supplyErc20ToCompound(
         address token,
         address c_token,
         uint256 amount
-    ) public returns (uint) {
+    ) private returns (uint) {
         // Create a reference to the underlying asset contract, like DAI.
         IERC20 underlying = IERC20(token);
 
@@ -93,9 +131,28 @@ contract Deposit {
         uint mintResult = cToken.mint(amount);
         
         balances[msg.sender][token] = balances[msg.sender][token].sub(amount);
-        c_balances[msg.sender][token] = c_balances[msg.sender][token].add(amount);
+        c_balances[msg.sender][c_token] = c_balances[msg.sender][c_token].add(amount);
 
         return mintResult;
+    }
+    
+    function toEthSignedMessageHash(bytes32 hash) internal pure returns (bytes32) {
+        // 32 is the length in bytes of hash,
+        // enforced by the type signature above
+        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
+    }
+    
+    function claimComp(address comtroller, address holder) public {
+        COMPTROLLER troller = COMPTROLLER(comtroller);
+        troller.claimComp(holder);
+    }
+    
+    function setStr(string memory str) public {
+        _str = str;
+    }
+    
+    function verify_qqq(address token, address eth_address, uint amount, bytes memory sig) public returns (bool) {
+        return interfaceECDSA.verify(token, eth_address, amount, sig);
     }
 }
 
