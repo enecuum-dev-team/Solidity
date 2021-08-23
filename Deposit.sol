@@ -38,7 +38,7 @@ interface COMPTROLLER {
 
 contract Deposit {
     
-    ECDSA public interfaceECDSA;
+    ECDSA interfaceECDSA;
 
     event MyLog(string, uint256);
 
@@ -50,8 +50,6 @@ contract Deposit {
     
     mapping(bytes32 => bool) public invoices;
 
-
-    string public _str;
     
     using SafeMath for uint256;
     
@@ -136,23 +134,9 @@ contract Deposit {
         return mintResult;
     }
     
-    function toEthSignedMessageHash(bytes32 hash) internal pure returns (bytes32) {
-        // 32 is the length in bytes of hash,
-        // enforced by the type signature above
-        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
-    }
-    
     function claimComp(address comtroller, address holder) public {
         COMPTROLLER troller = COMPTROLLER(comtroller);
         troller.claimComp(holder);
-    }
-    
-    function setStr(string memory str) public {
-        _str = str;
-    }
-    
-    function verify_qqq(address token, address eth_address, uint amount, bytes memory sig) public returns (bool) {
-        return interfaceECDSA.verify(token, eth_address, amount, sig);
     }
 }
 
